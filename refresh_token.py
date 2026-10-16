@@ -288,8 +288,10 @@ def main():
     # 保证无论是终端跑 .py 还是双击 exe，输出结构一致、都能照着做
     if gh_repo and shutil.which("gh") is not None:
         # 明文 token 只作为 stdin 传给 gh，不出现在命令行与进程列表中
+        # 注意：gh 2.73 的 `--body -` 会把字面量 "-" 存进 Secret（不从 stdin 读），
+        # 必须省略 --body，让 gh 从 stdin 读值。
         proc = subprocess.run(
-            ["gh", "secret", "set", "WB_ACCESS_TOKEN", "--repo", gh_repo, "--body", "-"],
+            ["gh", "secret", "set", "WB_ACCESS_TOKEN", "--repo", gh_repo],
             input=token.encode("utf-8"),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
