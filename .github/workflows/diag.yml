@@ -1,0 +1,21 @@
+name: diag
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: network diagnosis
+        run: |
+          echo "=== egress IP ==="
+          curl -s --max-time 10 https://api.ipify.org; echo
+          for BASE in https://www.workbuddy.cn https://copilot.tencent.com; do
+            echo "=== $BASE unauth POST: response headers + body head ==="
+            curl -s -D - -o /tmp/body.txt --max-time 20 -X POST \
+              "$BASE/v2/billing/meter/checkin-activity-status" \
+              -H "Content-Type: application/json" -d '{}' | head -25
+            echo "--- body (first 200 chars) ---"
+            head -c 200 /tmp/body.txt; echo
+          done
