@@ -336,12 +336,16 @@ def main():
     token = os.environ.get("WB_ACCESS_TOKEN")
     webhook = os.environ.get("FEISHU_WEBHOOK")
     endpoint = os.environ.get("WB_ENDPOINT") or DEFAULT_ENDPOINT
+    uid = os.environ.get("WB_UID")
+    domain = os.environ.get("WB_DOMAIN")
 
     if not token:
         log("缺少环境变量 WB_ACCESS_TOKEN（请在本机运行 refresh_token.py 注入 GitHub Secret）")
         return 2
     if not webhook:
         log("缺少环境变量 FEISHU_WEBHOOK")
+    if not uid:
+        log("缺少环境变量 WB_UID（服务端校验 X-User-Id，缺失会导致 401）")
 
     headers = {
         "Accept": "application/json",
@@ -349,6 +353,12 @@ def main():
         "Content-Type": "application/json",
         "User-Agent": "WorkBuddy",
     }
+    # 客户端 app.asar 的 buildHeadersWithTuringToken 路径要求账号标识头，
+    # 缺失时服务端返回 401（实测确认）；Turing 防护盾头非必需。
+    if uid:
+        headers["X-User-Id"] = uid
+    if domain:
+        headers["X-Domain"] = domain
 
     log("=== 1/2 签到 ===")
     checkin_ok, checkin = run_checkin(headers, endpoint)
