@@ -7,15 +7,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: network diagnosis
+      - name: auth diagnosis
+        env:
+          WB_ACCESS_TOKEN: ${{ secrets.WB_ACCESS_TOKEN }}
+          WB_UID: ${{ secrets.WB_UID }}
+          WB_DOMAIN: ${{ secrets.WB_DOMAIN }}
         run: |
-          echo "=== egress IP ==="
-          curl -s --max-time 10 https://api.ipify.org; echo
-          for BASE in https://www.workbuddy.cn https://copilot.tencent.com; do
-            echo "=== $BASE unauth POST: response headers + body head ==="
-            curl -s -D - -o /tmp/body.txt --max-time 20 -X POST \
-              "$BASE/v2/billing/meter/checkin-activity-status" \
-              -H "Content-Type: application/json" -d '{}' | head -25
-            echo "--- body (first 200 chars) ---"
-            head -c 200 /tmp/body.txt; echo
-          done
+          python3 - << 'PYEOF'
+          import os, hashlib, urllib.request, urllib.error
+          tok = os.environ.get("WB_ACCESS_TOKEN", "")
+          print("token len:", len(tok), "sha256[:12]:", hashlib.sha256(tok.encode()).hexdigest()[:12])
+          uid = os.environ.get("WB_UID",""); dom = os.environ.get("WB_DOMAIN","")
+          print("uid len:", len(uid), "domain:", dom)
+          base = "https://www.workbuddy.cn"
+          for label, extra in [
+              ("real-token", {"Authorization": "Bearer "+tok, "X-User-Id": uid, "X-Domain": dom}),
+              ("fake-token", {"Authorization": "Bearer fake.token.value"}),
+          ]:
+              h = {"Content-Type": "application/json", "User-Agent": "WorkBuddy", "Accept": "application/json"}
+              h.update(extra)
+              req = urllib.request.Request(base + "/v2/billing/meter/checkin-activity-status", data=b'{}', headers=h, method='POST')
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as r:
+                      print(label, "-> HTTP", r.status, r.read()[:150])
+              except urllib.error.HTTPError as e:
+                  print(label, "-> HTTP", e.code, repr(e.read()[:150]))
+              except Exception as e:
+                  print(label, "-> ERR", type(e).__name__, str(e)[:150])
+          PYEOF
