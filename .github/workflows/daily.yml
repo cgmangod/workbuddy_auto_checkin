@@ -51,6 +51,12 @@ jobs:
           WB_ACCESS_TOKEN: ${{ secrets.WB_ACCESS_TOKEN }}
           WB_UID: ${{ secrets.WB_UID }}
           WB_DOMAIN: ${{ secrets.WB_DOMAIN }}
+          WB_LABEL: chen_guo
+          # —— 账号 2（登台）：Secret 不存在时变量为空，脚本自动跳过该账号 ——
+          WB_ACCESS_TOKEN_2: ${{ secrets.WB_ACCESS_TOKEN_2 }}
+          WB_UID_2: ${{ secrets.WB_UID_2 }}
+          WB_DOMAIN_2: ${{ secrets.WB_DOMAIN_2 }}
+          WB_LABEL_2: 登台
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           WB_ENDPOINT: https://www.workbuddy.cn
           WB_RESULT_FILE: ${{ runner.temp }}/wb_result.json
