@@ -330,26 +330,40 @@ def push_feishu(webhook, title, checkin_line, buddy_line, overall_ok):
         return False
 
 
-# ---------------------------------------------------------------- 主流程
+# ---------------------------------------------------------------- 多账号
 
-def main():
-    token = os.environ.get("WB_ACCESS_TOKEN")
-    webhook = os.environ.get("FEISHU_WEBHOOK")
-    endpoint = os.environ.get("WB_ENDPOINT") or DEFAULT_ENDPOINT
-    uid = os.environ.get("WB_UID")
-    domain = os.environ.get("WB_DOMAIN")
+MAX_ACCOUNTS = 5
 
-    if not token:
-        log("缺少环境变量 WB_ACCESS_TOKEN（请在本机运行 refresh_token.py 注入 GitHub Secret）")
-        return 2
-    if not webhook:
-        log("缺少环境变量 FEISHU_WEBHOOK")
+
+def collect_accounts():
+    """收集 1~N 号账号；1 号位兼容旧的无限定名（WB_ACCESS_TOKEN）。"""
+    accounts = []
+    for i in range(1, MAX_ACCOUNTS + 1):
+        suffix = "" if i == 1 else "_%d" % i
+        token = os.environ.get("WB_ACCESS_TOKEN%s" % suffix)
+        if not token:
+            continue
+        accounts.append({
+            "label": os.environ.get("WB_LABEL%s" % suffix) or ("账号%d" % i),
+            "token": token,
+            "uid": os.environ.get("WB_UID%s" % suffix),
+            "domain": os.environ.get("WB_DOMAIN%s" % suffix),
+        })
+    return accounts
+
+
+def run_account(account, endpoint, webhook):
+    """跑单个账号的签到+猫猫，推一张飞书卡。返回该账号的结果 dict。"""
+    label = account["label"]
+    uid = account["uid"]
+    domain = account["domain"]
+
     if not uid:
-        log("缺少环境变量 WB_UID（服务端校验 X-User-Id，缺失会导致 401）")
+        log("[%s] 缺少环境变量 WB_UID（服务端校验 X-User-Id，缺失会导致 401）" % label)
 
     headers = {
         "Accept": "application/json",
-        "Authorization": "Bearer %s" % token,
+        "Authorization": "Bearer %s" % account["token"],
         "Content-Type": "application/json",
         "User-Agent": "WorkBuddy",
     }
@@ -360,12 +374,12 @@ def main():
     if domain:
         headers["X-Domain"] = domain
 
-    log("=== 1/2 签到 ===")
+    log("=== [%s] 1/2 签到 ===" % label)
     checkin_ok, checkin = run_checkin(headers, endpoint)
     log("  结论：%s" % checkin["report"])
 
     # 猫猫独立 try：任何异常都不影响签到结论
-    log("=== 2/2 猫猫旅行 ===")
+    log("=== [%s] 2/2 猫猫旅行 ===" % label)
     try:
         buddy = run_buddy(headers, endpoint)
     except Exception as e:
@@ -378,24 +392,59 @@ def main():
     buddy_line = ("🐱 " + buddy.get("report", "")) if buddy.get("report") else "🐱 无结论"
 
     if webhook:
-        push_feishu(webhook, "每日自动化", checkin_line, buddy_line, overall_ok)
+        push_feishu(webhook, "每日自动化 · %s" % label, checkin_line, buddy_line, overall_ok)
 
-    result = {
+    return {
+        "label": label,
         "checkin": {"ok": checkin_ok, **checkin},
         "buddy": {k: v for k, v in buddy.items() if k != "notes"},
         "overall_ok": overall_ok,
+        "lines": (checkin_line, buddy_line),
     }
-    print("RESULT_JSON " + json.dumps(result, ensure_ascii=False))
+
+
+def main():
+    webhook = os.environ.get("FEISHU_WEBHOOK")
+    endpoint = os.environ.get("WB_ENDPOINT") or DEFAULT_ENDPOINT
+    accounts = collect_accounts()
+
+    if not accounts:
+        log("缺少环境变量 WB_ACCESS_TOKEN（请在本机运行 refresh_token.py 注入 GitHub Secret；"
+            "多账号用 WB_ACCESS_TOKEN_2、WB_ACCESS_TOKEN_3… 追加）")
+        return 2
+    if not webhook:
+        log("缺少环境变量 FEISHU_WEBHOOK")
+
+    results = []
+    for account in accounts:
+        try:
+            results.append(run_account(account, endpoint, webhook))
+        except Exception as e:
+            log("[%s] 账号处理异常：%s: %s" % (account["label"], type(e).__name__, e))
+            results.append({"label": account["label"],
+                            "checkin": {"ok": False, "result": "ERROR",
+                                        "report": "账号处理异常（%s）" % type(e).__name__},
+                            "buddy": {"result": "SKIPPED", "report": "因账号异常跳过"},
+                            "overall_ok": False,
+                            "lines": (("❌ 账号处理异常"), ("🐱 已跳过"))})
+
+    # 汇总：任一账号签到失败则整体为失败
+    overall_ok = all(r["overall_ok"] for r in results)
+    print("RESULT_JSON " + json.dumps(
+        {"accounts": [{k: v for k, v in r.items() if k != "lines"} for r in results],
+         "overall_ok": overall_ok}, ensure_ascii=False))
 
     # 结果文件只含结论文案，不含 token，供 Actions 写入 step summary
     result_file = os.environ.get("WB_RESULT_FILE")
     if result_file:
         try:
             with open(result_file, "w", encoding="utf-8") as f:
-                f.write("| 项目 | 结论 |\n| --- | --- |\n")
-                f.write("| 签到 | %s |\n" % checkin_line)
-                f.write("| 猫猫旅行 | %s |\n" % buddy_line)
-                f.write("| 整体 | %s |\n" % ("成功（签到已达成）" if overall_ok else "失败（签到未达成）"))
+                f.write("| 账号 | 签到 | 猫猫旅行 |\n| --- | --- | --- |\n")
+                for r in results:
+                    checkin_line, buddy_line = r["lines"]
+                    f.write("| %s | %s | %s |\n" % (r["label"], checkin_line, buddy_line))
+                f.write("\n整体：%s\n" % ("成功（全部账号签到已达成）" if overall_ok
+                                          else "失败（存在签到未达成的账号）"))
         except OSError as e:
             log("结果文件写入失败：%s" % e)
 
